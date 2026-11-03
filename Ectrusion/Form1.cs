@@ -15,6 +15,15 @@ namespace Ectrusion
         public Form1()
         {
             InitializeComponent();
+        } 
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            var m = Db.GetMaterials()[0];
+            var r = Db.GetRange(m.Id);
+            double eta = ViscosityModel.Calculate(m, 180, 30);
+            MessageBox.Show(m.Name + ": T " + r.TMin + ".." + r.TMax +
+                            ", eta(180; 30) = " + eta.ToString("F4"));
         }
     }
 }
