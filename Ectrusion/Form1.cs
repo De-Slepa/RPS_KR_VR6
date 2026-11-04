@@ -8,11 +8,15 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Globalization;
+using System.Windows.Forms.DataVisualization.Charting;
 
 namespace Ectrusion
 {
     public partial class Form1 : Form
     {
+        private double[] _tValues;
+        private double[] _gValues;
+        private double[,] _eta;
         public Form1()
         {
             InitializeComponent();
@@ -24,6 +28,10 @@ namespace Ectrusion
             dgvResult.AllowUserToAddRows = false;
             dgvResult.RowHeadersVisible = false;
             dgvResult.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells;
+
+            cmbAxis.Items.Add("От температуры T (γ = const)");
+            cmbAxis.Items.Add("От скорости сдвига γ (T = const)");
+            cmbAxis.SelectedIndex = 0;
 
             try
             {
@@ -56,6 +64,10 @@ namespace Ectrusion
             txtGStep.Text = Fmt(r.GammaStep);
         }
 
+        private void cmbAxis_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            DrawChart();
+        }
         // строим таблицу
         private void button1_Click(object sender, EventArgs e)
         {
@@ -78,30 +90,96 @@ namespace Ectrusion
                 return;
             }
 
-            var m = new Material { Mu0 = mu0, B = b, T0 = t0, N = n };
-
             int countT = (int)Math.Floor((tMax - tMin) / tStep + 1e-9) + 1;
             int countG = (int)Math.Floor((gMax - gMin) / gStep + 1e-9) + 1;
+            if (countT > 1000 || countG > 1000)
+            {
+                MessageBox.Show("Слишком много точек. Увеличьте шаг.");
+                return;
+            }
 
+            var m = new Material { Mu0 = mu0, B = b, T0 = t0, N = n };
+
+            _tValues = new double[countT];
+            _gValues = new double[countG];
+            _eta = new double[countT, countG];
+            for (int i = 0; i < countT; i++) _tValues[i] = tMin + i * tStep;
+            for (int j = 0; j < countG; j++) _gValues[j] = gMin + j * gStep;
+            for (int i = 0; i < countT; i++)
+                for (int j = 0; j < countG; j++)
+                    _eta[i, j] = ViscosityModel.Calculate(m, _tValues[i], _gValues[j]);
+
+            FillTable();
+            DrawChart();
+        }
+        private void FillTable()
+        {
             dgvResult.Columns.Clear();
             dgvResult.Columns.Add("colT", "T, °C  \\  γ, 1/с");
-            for (int j = 0; j < countG; j++)
-            {
-                double g = gMin + j * gStep;
-                dgvResult.Columns.Add("colG" + j, g.ToString("0.##"));
-            }
+            for (int j = 0; j < _gValues.Length; j++)
+                dgvResult.Columns.Add("colG" + j, _gValues[j].ToString("0.##"));
 
-            for (int i = 0; i < countT; i++)
+            for (int i = 0; i < _tValues.Length; i++)
             {
-                double t = tMin + i * tStep;
-                var row = new List<object> { t.ToString("0.##") };
-                for (int j = 0; j < countG; j++)
-                {
-                    double g = gMin + j * gStep;
-                    row.Add(ViscosityModel.Calculate(m, t, g).ToString("F2"));
-                }
+                var row = new List<object> { _tValues[i].ToString("0.##") };
+                for (int j = 0; j < _gValues.Length; j++)
+                    row.Add(_eta[i, j].ToString("F2"));
                 dgvResult.Rows.Add(row.ToArray());
             }
+        }
+        private void DrawChart()
+        {
+            chartResult.Series.Clear();
+            chartResult.Titles.Clear();
+            if (_eta == null) return;
+
+            bool byT = cmbAxis.SelectedIndex == 0;   // по оси X температура?
+            var area = chartResult.ChartAreas[0];
+            area.AxisX.Minimum = double.NaN;
+            area.AxisX.Maximum = double.NaN;
+            area.AxisY.Minimum = double.NaN;
+            area.AxisY.Maximum = double.NaN;
+            area.AxisX.Title = byT ? "Температура T, °C" : "Скорость деформации сдвига γ, 1/с";
+            area.AxisY.Title = "Вязкость η, Па·с";
+            area.AxisX.IsStartedFromZero = false;
+            area.AxisY.IsStartedFromZero = false;
+            area.AxisX.MajorGrid.LineColor = Color.LightGray;
+            area.AxisY.MajorGrid.LineColor = Color.LightGray;
+
+            chartResult.Titles.Add("Вязкость экструдата: " + cmbMaterial.Text);
+
+            int fixedCount = byT ? _gValues.Length : _tValues.Length;
+            int pointCount = byT ? _tValues.Length : _gValues.Length;
+
+            foreach (int k in Pick3(fixedCount))
+            {
+                string name = byT
+                    ? "γ = " + _gValues[k].ToString("0.##") + " 1/с"
+                    : "T = " + _tValues[k].ToString("0.##") + " °C";
+
+                var s = new Series(name)
+                {
+                    ChartType = SeriesChartType.Line,
+                    BorderWidth = 2,
+                    MarkerStyle = MarkerStyle.Circle,
+                    MarkerSize = 5
+                };
+
+                for (int i = 0; i < pointCount; i++)
+                {
+                    if (byT) s.Points.AddXY(_tValues[i], _eta[i, k]);
+                    else s.Points.AddXY(_gValues[i], _eta[k, i]);
+                }
+                chartResult.Series.Add(s);
+            }
+            area.RecalculateAxesScale();
+        }
+
+        private static int[] Pick3(int count)
+        {
+            if (count <= 1) return new[] { 0 };
+            if (count == 2) return new[] { 0, 1 };
+            return new[] { 0, count / 2, count - 1 };
         }
 
         private static string Fmt(double x)
@@ -121,5 +199,7 @@ namespace Ectrusion
             }
             return true;
         }
+
+        
     }
 }
